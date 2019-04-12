@@ -14,6 +14,7 @@ import org.apache.hadoop.util.ReflectionUtils;
 import java.io.IOException;
 import java.net.URI;
 import java.util.HashMap;
+import java.util.Map;
 import java.util.StringTokenizer;
 
 /**
@@ -23,7 +24,8 @@ import java.util.StringTokenizer;
 public class NaiveBayes {
     static String[] outArgs;
 
-    public static IntWritable calcSum(Iterable<IntWritable> values) {
+    //计算INT型值的集合，返回所有值的和
+    private static IntWritable calcSum(Iterable<IntWritable> values) {
         IntWritable result = new IntWritable();
         int sum = 0;
         for (IntWritable value: values) {
@@ -139,12 +141,72 @@ public class NaiveBayes {
 
     /* 计算条件概率
 	 * 条件概率P(tk|c)=(类c下单词tk在各个文档中出现过的次数之和+1)/（类c下单词总数+训练样本中不重复特征词总数）
-	 * 输入:对应第一个MapReduce的输出<<class,word>,counts>,第二个MapReduce的输出<class,totalWords>,第三个MapReduce的输出<class,diffTotalWords>
+	 * 输入:对应第一个MapReduce的输出<<class,word>,counts>,第二个MapReduce的输出<class,totalWords>,第三个MapReduce的输出<word,one>
 	 * 输出:得到HashMap<String,Double>,即<<类名:单词>,概率>
 	 */
     private static HashMap<String, Double> wordsProbably = new HashMap<String, Double>();
     public static HashMap<String, Double> GetConditionProbably() throws IOException {
         Configuration configuration = new Configuration();
+        String classWordCountsPath = outArgs[1] + "/part-r-00000";
+        String classTotalWordsPath = outArgs[2] + "/part-r-00000";
+        String difffTotalWordsPath = outArgs[3] + "/part-r-00000";
+        double totalDiffWords = 0.0;
+        HashMap<String, Double> classTotalWordsMap = new HashMap<String, Double>();
 
+        //计算每个类包含的所有单词数量，放入map中
+        FileSystem fs1 = FileSystem.get(URI.create(classTotalWordsPath), configuration);
+        Path path1 = new Path(classTotalWordsPath);
+        SequenceFile.Reader reader1 = null;
+        try {
+            reader1 = new SequenceFile.Reader(fs1, path1, configuration);
+            Text key = (Text) ReflectionUtils.newInstance(reader1.getKeyClass(), configuration);
+            IntWritable value = (IntWritable) ReflectionUtils.newInstance(reader1.getValueClass(), configuration);
+            while (reader1.next(key, value)) {
+                classTotalWordsMap.put(key.toString(), value.get() * 1.0);
+            }
+        } finally {
+            IOUtils.closeStream(reader1);
+        }
+
+        //计算每个类下不重复单词的数量
+        FileSystem fs2 = FileSystem.get(URI.create(difffTotalWordsPath), configuration);
+        Path path2 = new Path(difffTotalWordsPath);
+        SequenceFile.Reader reader2 = null;
+        try {
+            reader2 = new SequenceFile.Reader(fs2, path2, configuration);
+            Text key = (Text) ReflectionUtils.newInstance(reader2.getKeyClass(), configuration);
+            IntWritable value = (IntWritable) ReflectionUtils.newInstance(reader2.getValueClass(), configuration);
+            while (reader2.next(key, value)) {
+                totalDiffWords += value.get();
+            }
+        } finally {
+            IOUtils.closeStream(reader2);
+        }
+
+        //计算条件概率P(tk|c)=(类c下单词tk在各个文档中出现过的次数之和+1)/（类c下单词总数+训练样本中不重复特征词总数）
+        FileSystem fs3 = FileSystem.get(URI.create(classWordCountsPath), configuration);
+        Path path3 = new Path(classWordCountsPath);
+        SequenceFile.Reader reader3 = null;
+        try {
+            reader3 = new SequenceFile.Reader(fs3, path3, configuration);
+            Text key = (Text) ReflectionUtils.newInstance(reader3.getKeyClass(), configuration);
+            IntWritable value = (IntWritable) ReflectionUtils.newInstance(reader3.getValueClass(), configuration);
+            String newKey = null;
+            int index;
+            while (reader3.next(key, value)) {
+                index = key.toString().indexOf(",");
+                newKey = key.toString().substring(0, index);
+                wordsProbably.put(key.toString(), (value.get() + 1) / (classTotalWordsMap.get(newKey) + totalDiffWords));
+            }
+            //对于同一个类别没有出现过的单词的概率一样，1/(ClassTotalWords.get(class) + TotalDiffWords)
+            //遍历类，每个类别中再加一个没有出现单词的概率，其格式为<class,probably>
+            for (Map.Entry<String, Double> entry : classTotalWordsMap.entrySet()) {
+                wordsProbably.put(entry.getKey(), entry.getValue() + totalDiffWords);
+            }
+        } finally {
+            IOUtils.closeStream(reader3);
+        }
+
+        return wordsProbably;
     }
 }
