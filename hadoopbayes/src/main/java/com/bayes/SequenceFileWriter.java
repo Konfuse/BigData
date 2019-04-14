@@ -30,10 +30,10 @@ public class SequenceFileWriter {
     }
 
     public static void main(String[] args) throws IOException {
-        String trainSet = "/home/konfuse/Documents/NBCorpus";
+        String trainSet = "/home/konfuse/Documents/Bayes/test";
         File[] dirs = new File(trainSet).listFiles();
 
-        String uri = "hdfs://localhost:9000/user/hadoop/training/NBCorpus";
+        String uri = "hdfs://localhost:9000/user/hadoop/bayes/test";
         Configuration conf = new Configuration();
         FileSystem fs = FileSystem.get(URI.create(uri), conf);
         Path path = new Path(uri);
